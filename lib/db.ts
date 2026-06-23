@@ -3,16 +3,27 @@ import { Signer } from "@aws-sdk/rds-signer"
 import { awsCredentialsProvider } from "@vercel/functions/oidc"
 import { attachDatabasePool } from "@vercel/functions"
 
-const signer = new Signer({
-  credentials: awsCredentialsProvider({
-    roleArn: process.env.AWS_ROLE_ARN!,
-    clientConfig: { region: process.env.AWS_REGION },
-  }),
-  region: process.env.AWS_REGION,
-  hostname: process.env.PGHOST!,
-  username: process.env.PGUSER || "postgres",
-  port: 5432,
-})
+const AWS_ROLE_ARN = process.env.AWS_ROLE_ARN
+const AWS_REGION = process.env.AWS_REGION || "us-east-1"
+const PGHOST = process.env.PGHOST!
+const PGUSER = process.env.PGUSER || "postgres"
+const PGDATABASE = process.env.PGDATABASE || "postgres"
+const PGPORT = Number(process.env.PGPORT) || 5432
+
+// Only create the IAM signer when a role ARN is available (i.e. Preview/Production).
+// In development without a role ARN we rely on PGPASSWORD if set.
+const signer = AWS_ROLE_ARN
+  ? new Signer({
+      credentials: awsCredentialsProvider({
+        roleArn: AWS_ROLE_ARN,
+        clientConfig: { region: AWS_REGION },
+      }),
+      region: AWS_REGION,
+      hostname: PGHOST,
+      username: PGUSER,
+      port: PGPORT,
+    })
+  : null
 
 declare global {
   // eslint-disable-next-line no-var
@@ -21,11 +32,12 @@ declare global {
 
 function createPool() {
   const pool = new Pool({
-    host: process.env.PGHOST,
-    database: process.env.PGDATABASE || "postgres",
-    port: 5432,
-    user: process.env.PGUSER || "postgres",
-    password: () => signer.getAuthToken(),
+    host: PGHOST,
+    database: PGDATABASE,
+    port: PGPORT,
+    user: PGUSER,
+    // Use IAM token when signer is available, otherwise fall back to PGPASSWORD env var.
+    password: signer ? () => signer.getAuthToken() : (process.env.PGPASSWORD ?? undefined),
     ssl: { rejectUnauthorized: false },
     max: 20,
   })
